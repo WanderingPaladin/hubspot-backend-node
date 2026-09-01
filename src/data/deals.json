@@ -1,0 +1,14 @@
+[
+  {
+    "dealname": "Assessment — Analytical Engines Renewal",
+    "amount": "2500",
+    "pipeline": "default",
+    "dealstage": "appointmentscheduled"
+  },
+  {
+    "dealname": "Assessment — COBOL Labs Expansion",
+    "amount": "4800",
+    "pipeline": "default",
+    "dealstage": "appointmentscheduled"
+  }
+]

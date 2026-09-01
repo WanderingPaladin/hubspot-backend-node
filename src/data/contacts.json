@@ -1,0 +1,14 @@
+[
+  {
+    "email": "riley.assessment+ada@example.com",
+    "firstname": "Ada",
+    "lastname": "Lovelace",
+    "company": "Analytical Engines"
+  },
+  {
+    "email": "riley.assessment+grace@example.com",
+    "firstname": "Grace",
+    "lastname": "Hopper",
+    "company": "COBOL Labs"
+  }
+]
