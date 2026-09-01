@@ -5,7 +5,7 @@
   "main": "src/handlers/hubSpotApiHandler.js",
   "scripts": {
     "start": "node src/handlers/hubSpotApiHandler.js",
-    "test": "node --test test/",
+    "test": "node --test ./test/*.js",
     "fundamentals:callbacks": "node src/fundamentals/callbacks.js",
     "fundamentals:async": "node src/fundamentals/asyncAwait.js",
     "fundamentals:modules": "node src/fundamentals/main.js",
