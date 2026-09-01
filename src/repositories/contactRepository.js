@@ -1,31 +1,14 @@
 const { hubSpotClient } = require('../clients/hubSpotClient');
 
-const CONTACTS_PATH = '/crm/v3/objects/contacts';
 const DEFAULT_PROPERTIES = ['firstname', 'lastname', 'email', 'phone', 'company'];
 
 const contactRepository = {
   async list({ limit = 100, after, properties = DEFAULT_PROPERTIES, archived = false } = {}) {
-    return hubSpotClient.get(
-      CONTACTS_PATH,
-      {
-        limit,
-        after,
-        properties: properties.join(','),
-        archived,
-      },
-      { operation: 'contactRepository.list' },
-    );
+    return hubSpotClient.contacts.list({ limit, after, properties, archived });
   },
 
   async getById(id, { properties = DEFAULT_PROPERTIES, idProperty } = {}) {
-    return hubSpotClient.get(
-      `${CONTACTS_PATH}/${encodeURIComponent(id)}`,
-      {
-        properties: properties.join(','),
-        idProperty,
-      },
-      { operation: 'contactRepository.getById' },
-    );
+    return hubSpotClient.contacts.getById(id, { properties, idProperty });
   },
 
   async findByEmail(email, { properties = DEFAULT_PROPERTIES } = {}) {
@@ -40,43 +23,24 @@ const contactRepository = {
   },
 
   async search({ filters, properties = DEFAULT_PROPERTIES, limit = 10, after } = {}) {
-    return hubSpotClient.post(
-      `${CONTACTS_PATH}/search`,
-      {
-        filterGroups: [{ filters }],
-        properties,
-        limit,
-        after,
-      },
-      undefined,
-      { operation: 'contactRepository.search' },
-    );
+    return hubSpotClient.contacts.search({
+      filterGroups: [{ filters }],
+      properties,
+      limit,
+      after,
+    });
   },
 
   async create(properties) {
-    return hubSpotClient.post(
-      CONTACTS_PATH,
-      { properties },
-      undefined,
-      { operation: 'contactRepository.create' },
-    );
+    return hubSpotClient.contacts.create(properties);
   },
 
   async update(id, properties) {
-    return hubSpotClient.patch(
-      `${CONTACTS_PATH}/${encodeURIComponent(id)}`,
-      { properties },
-      undefined,
-      { operation: 'contactRepository.update' },
-    );
+    return hubSpotClient.contacts.update(id, properties);
   },
 
   async delete(id) {
-    await hubSpotClient.delete(
-      `${CONTACTS_PATH}/${encodeURIComponent(id)}`,
-      undefined,
-      { operation: 'contactRepository.delete' },
-    );
+    await hubSpotClient.contacts.archive(id);
     return { id, deleted: true };
   },
 };

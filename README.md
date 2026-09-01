@@ -2,7 +2,7 @@
 
 Modular Node.js project that talks to a real HubSpot portal (Private App token) to manage Contacts, Deals, and Associations. It also includes the Section 1 Node.js fundamentals demos.
 
-Mocks are not used for HubSpot. Every CRM function issues official REST calls through a single HTTP client.
+Mocks are not used for HubSpot. Every CRM function goes through `hubSpotClient`, which wraps the official `@hubspot/api-client`.
 
 ## Why this structure
 
@@ -11,7 +11,7 @@ Responsibilities are split so HubSpot transport, CRUD, business rules, and runna
 | Folder | Role |
 | --- | --- |
 | `src/config` | Environment and defaults (`HUBSPOT_ACCESS_TOKEN`, pipeline/stage, timeouts) |
-| `src/clients` | `hubSpotClient` — Axios instance, Bearer auth, retries |
+| `src/clients` | `hubSpotClient` — official `@hubspot/api-client` plus retries |
 | `src/repositories` | `contactRepository` / `dealRepository` — object CRUD only |
 | `src/services` | `hubSpotService` — named operations (list names, sync, associate) |
 | `src/utils` | `validateHubSpotPayload`, `handleHubSpotErrors`, streams |
@@ -27,13 +27,13 @@ The assessment names (`hubSpotClient`, `hubSpotService`, `contactRepository`, `d
 
 | Package | Why |
 | --- | --- |
-| `axios` | HTTP client with timeouts; retry/backoff is implemented here so 429/5xx handling is visible |
+| `@hubspot/api-client` | Official HubSpot Node client for Contacts, Deals, Associations, and Pipelines |
 | `dotenv` | Load `.env` without putting secrets in code |
 | `express` | Optional `hubSpotApiHandler` HTTP surface |
 
 Node.js built-ins used: `fs`, `stream`, `path`, `node:test`.
 
-`@hubspot/api-client` was not used so pagination, association calls, and error classification stay explicit against the official REST docs.
+`hubSpotClient` uses the generated CRM APIs (`crm.contacts.basicApi`, `crm.deals.basicApi`, `crm.associations.v4`, `crm.pipelines`). `apiRequest` is only used for account-info. SDK built-in retries are turned off (`numberOfApiCallRetries: 0`) so `handleHubSpotErrors` owns the assessment policy: no retry on 401/403/4xx, exponential backoff + `Retry-After` on 429/5xx.
 
 ## Portal / hubId
 
@@ -192,11 +192,11 @@ Official deal properties are `dealname`, `amount`, `pipeline`, and `dealstage` (
 
 ## Associations and idempotency
 
-`associateContactToDeal(contactId, dealId)`:
+`associateContactToDeal(contactId, dealId)` (via `@hubspot/api-client`):
 
-1. `GET /crm/v4/objects/contacts/{contactId}/associations/deals` — if the deal is already linked, return success without writing.
-2. Otherwise `PUT /crm/v4/objects/contacts/{id}/associations/default/deals/{id}` (unlabeled default association; PUT is safe to repeat).
-3. Fallback: `PUT /crm/v3/objects/contacts/{id}/associations/deals/{id}/4`.
+1. `crm.associations.v4.basicApi.getPage('contacts', contactId, 'deals')` — if the deal is already linked, return success without writing.
+2. Otherwise `createDefault('contacts', contactId, 'deals', dealId)` (unlabeled default association; safe to repeat).
+3. Fallback: `create(..., [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: AssociationTypes.contactToDeal }])` (typeId **4**).
 
 Sync is idempotent by unique key (`email` for contacts, `id` then `dealname` for deals): existing records are patched; missing records are created.
 
@@ -206,7 +206,7 @@ Sync is idempotent by unique key (`email` for contacts, `id` then `dealname` for
 
 | Case | HTTP / code | Retry | Notes |
 | --- | --- | --- | --- |
-| Network / timeout | `ECONNABORTED`, `ETIMEDOUT`, `ECONNRESET`, … | Yes | Axios `timeout` from `HUBSPOT_TIMEOUT_MS` |
+| Network / timeout | `ECONNABORTED`, `ETIMEDOUT`, `ECONNRESET`, … | Yes | No HTTP status from the SDK / transport |
 | Auth | 401 / 403 | No | Check token and scopes |
 | Validation / not found | 400 / 404 / other 4xx | No | Payload or missing record |
 | Rate limit | 429 | Yes | Honor `Retry-After` |
@@ -217,8 +217,9 @@ Every service method wraps calls in `try/catch` and rethrows a normalized `HubSp
 ## Technical decisions
 
 - **CommonJS** for the whole project so Section 1 (`utils_module.js` / `main.js`) and HubSpot code share one module system.
-- **Axios instead of the official SDK** so pagination, 429 backoff, and request payloads stay visible in this repo.
-- **Repositories vs service**: repositories only talk HTTP; the service owns pagination loops, name formatting, sync, and association idempotency.
+- **Official `@hubspot/api-client`** for Contacts, Deals, Associations, and Pipelines so calls match HubSpot’s generated API.
+- **Custom retries on top of the SDK** (`numberOfApiCallRetries: 0`) so 401/403 never retry and 429 honors `Retry-After`.
+- **Repositories vs service**: repositories only call the client; the service owns pagination loops, name formatting, sync, and association idempotency.
 - **Bearer Private App token** is the supported auth method (current HubSpot recommendation).
 - **Example scripts** create clearly prefixed test data (`riley.assessment+…@example.com`) so a portal can be cleaned up after evaluation.
 

@@ -9,8 +9,29 @@ const NETWORK_CODES = new Set([
   'ECONNREFUSED',
 ]);
 
+function getStatus(error) {
+  if (error.response?.status != null) {
+    return error.response.status;
+  }
+  if (typeof error.statusCode === 'number') {
+    return error.statusCode;
+  }
+  if (typeof error.code === 'number') {
+    return error.code;
+  }
+  return undefined;
+}
+
+function getBody(error) {
+  return error.response?.data ?? error.body;
+}
+
+function getHeaders(error) {
+  return error.response?.headers || error.headers || {};
+}
+
 function readRetryAfterMs(error) {
-  const header = error.response?.headers?.['retry-after'];
+  const header = getHeaders(error)['retry-after'] || getHeaders(error)['Retry-After'];
   if (!header) {
     return undefined;
   }
@@ -26,7 +47,7 @@ function readRetryAfterMs(error) {
 }
 
 function hubSpotMessage(error) {
-  const data = error.response?.data;
+  const data = getBody(error);
   if (!data) {
     return error.message || 'Unknown HubSpot error';
   }
@@ -37,8 +58,8 @@ function hubSpotMessage(error) {
 }
 
 /**
- * Normalize a HubSpot / Axios failure, log a sanitized record, and return
- * a structured Error the client can use for retry decisions.
+ * Normalize a HubSpot SDK (ApiException) or HTTP failure, log a sanitized
+ * record, and return a structured Error the client can use for retry decisions.
  *
  * Classification (see README for the full policy):
  * - Network / timeout  → retryable
@@ -52,15 +73,15 @@ function handleHubSpotErrors(error, context = {}) {
     return error;
   }
 
-  const status = error.response?.status;
-  const code = error.code;
+  const status = getStatus(error);
+  const code = typeof error.code === 'string' ? error.code : undefined;
   const retryAfterMs = readRetryAfterMs(error);
 
   let type = 'UNKNOWN';
   let retryable = false;
   let message = hubSpotMessage(error);
 
-  if (!error.response) {
+  if (status == null) {
     type = 'NETWORK';
     retryable =
       NETWORK_CODES.has(code) ||
@@ -94,7 +115,7 @@ function handleHubSpotErrors(error, context = {}) {
   normalized.code = code;
   normalized.retryable = retryable;
   normalized.retryAfterMs = retryAfterMs;
-  normalized.details = redact(error.response?.data);
+  normalized.details = redact(getBody(error));
   normalized.context = redact(context);
 
   const logPayload = {

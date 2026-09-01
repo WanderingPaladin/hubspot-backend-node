@@ -193,17 +193,14 @@ async function deleteHubSpotDeal(id) {
 }
 
 async function listContactDealAssociations(contactId) {
-  return hubSpotClient.get(
-    `/crm/v4/objects/contacts/${encodeURIComponent(contactId)}/associations/deals`,
-    undefined,
-    { operation: 'listContactDealAssociations' },
-  );
+  return hubSpotClient.associations.listContactDeals(contactId);
 }
 
 /**
- * Idempotent association: skip if the pair already exists, otherwise
- * PUT /crm/v4/objects/contacts/{id}/associations/default/deals/{id}.
- * Falls back to the v3 typed association (typeId 4 = Contact to deal).
+ * Idempotent association via @hubspot/api-client:
+ * 1. GET existing v4 associations and skip if already linked
+ * 2. createDefault (unlabeled Contact ↔ Deal)
+ * 3. Fallback: v4 create with AssociationTypes.contactToDeal (typeId 4)
  */
 async function associateContactToDeal(contactId, dealId) {
   try {
@@ -226,18 +223,13 @@ async function associateContactToDeal(contactId, dealId) {
         };
       }
     } catch (lookupError) {
-      logInfo('Could not pre-check associations; continuing with PUT', {
+      logInfo('Could not pre-check associations; continuing with createDefault', {
         status: lookupError.status,
       });
     }
 
     try {
-      const created = await hubSpotClient.put(
-        `/crm/v4/objects/contacts/${encodeURIComponent(contactId)}/associations/default/deals/${encodeURIComponent(dealId)}`,
-        {},
-        undefined,
-        { operation: 'associateContactToDeal.v4' },
-      );
+      const created = await hubSpotClient.associations.createDefaultContactToDeal(contactId, dealId);
       return {
         contactId,
         dealId,
@@ -246,16 +238,11 @@ async function associateContactToDeal(contactId, dealId) {
         idempotent: true,
         result: created,
       };
-    } catch (v4Error) {
-      logInfo('v4 default association failed; falling back to v3 typeId 4', {
-        status: v4Error.status,
+    } catch (defaultError) {
+      logInfo('Default association failed; falling back to typeId 4 (contactToDeal)', {
+        status: defaultError.status,
       });
-      const created = await hubSpotClient.put(
-        `/crm/v3/objects/contacts/${encodeURIComponent(contactId)}/associations/deals/${encodeURIComponent(dealId)}/${CONTACT_TO_DEAL_ASSOCIATION_TYPE_ID}`,
-        {},
-        undefined,
-        { operation: 'associateContactToDeal.v3' },
-      );
+      const created = await hubSpotClient.associations.createTypedContactToDeal(contactId, dealId);
       return {
         contactId,
         dealId,
@@ -393,9 +380,7 @@ async function getHubSpotAccount() {
 
 async function getHubSpotDealPipelines() {
   try {
-    return await hubSpotClient.get('/crm/v3/pipelines/deals', undefined, {
-      operation: 'getHubSpotDealPipelines',
-    });
+    return await hubSpotClient.pipelines.listDeals();
   } catch (error) {
     throw handleHubSpotErrors(error, { operation: 'getHubSpotDealPipelines' });
   }

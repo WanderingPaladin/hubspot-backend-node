@@ -61,6 +61,17 @@ test('getRetryDelayMs honors Retry-After over exponential backoff', () => {
   assert.ok(getRetryDelayMs(2, 500) >= 2000);
 });
 
+test('official SDK ApiException shape is classified the same way', () => {
+  const sdkError = new Error('Too many requests');
+  sdkError.code = 429;
+  sdkError.body = { message: 'slow down' };
+  sdkError.headers = { 'retry-after': '3' };
+  const normalized = handleHubSpotErrors(sdkError);
+  assert.equal(normalized.type, 'RATE_LIMIT');
+  assert.equal(normalized.status, 429);
+  assert.equal(normalized.retryAfterMs, 3000);
+});
+
 test('redact strips bearer tokens', () => {
   const hidden = redact({
     Authorization: 'Bearer pat-na1-secret',
