@@ -1,100 +1,81 @@
-# HubSpot CRM Integration (Node.js)
+# hubspot-backend-node
 
-Modular Node.js project that talks to a real HubSpot portal (Private App token) to manage Contacts, Deals, and Associations. It also includes the Section 1 Node.js fundamentals demos.
+This is the Node.js + HubSpot take-home. Contacts, deals, associations. Real API calls, not mocks.
 
-Mocks are not used for HubSpot. Every CRM function goes through `hubSpotClient`, which wraps the official `@hubspot/api-client`.
+Section 1 (callbacks, promises, CommonJS, streams) is under `src/fundamentals/` and `src/utils/streams.js`. Everything else talks to HubSpot through `hubSpotClient`.
 
-## Why this structure
+I used `@hubspot/api-client` because that's the official client. Also `dotenv` and `express`. Built-ins for the rest (`fs`, `stream`, `path`, `node:test`).
 
-Responsibilities are split so HubSpot transport, CRUD, business rules, and runnable examples do not live in one file:
+## Layout
 
-| Folder | Role |
-| --- | --- |
-| `src/config` | Environment and defaults (`HUBSPOT_ACCESS_TOKEN`, pipeline/stage, timeouts) |
-| `src/clients` | `hubSpotClient` — official `@hubspot/api-client` plus retries |
-| `src/repositories` | `contactRepository` / `dealRepository` — object CRUD only |
-| `src/services` | `hubSpotService` — named operations (list names, sync, associate) |
-| `src/utils` | `validateHubSpotPayload`, `handleHubSpotErrors`, streams |
-| `src/handlers` | `hubSpotApiHandler` — small Express API for the same operations |
-| `src/examples` | One-command scripts (`node src/examples/create-contact.js`) |
-| `src/fundamentals` | Callbacks, Promises/async-await, CommonJS modules |
-| `src/data` | Local JSON sources for idempotent sync |
-| `test` | Unit tests that do not need a HubSpot token |
+The brief said not to submit a single `.js` file, which I wouldn't have done anyway. Split by what each piece is responsible for:
 
-The assessment names (`hubSpotClient`, `hubSpotService`, `contactRepository`, `dealRepository`, `validateHubSpotPayload`, `handleHubSpotErrors`, `hubSpotApiHandler`) map 1:1 to those files.
+```
+src/
+  config/          token, pipeline, timeouts — from env
+  clients/         hubSpotClient (SDK + retries)
+  repositories/    contactRepository, dealRepository (CRUD only)
+  services/        hubSpotService (the named functions from the test)
+  utils/           validateHubSpotPayload, handleHubSpotErrors, streams, logger
+  handlers/        hubSpotApiHandler — small Express app if you want HTTP
+  examples/        node src/examples/create-contact.js etc.
+  fundamentals/    callbacks.js, asyncAwait.js, utils_module.js, main.js
+  data/            local JSON for the sync scripts
+test/              unit tests, no token needed
+.env.example
+```
 
-## Libraries
+`hubSpotClient` / `hubSpotService` / `contactRepository` / `dealRepository` / `validateHubSpotPayload` / `handleHubSpotErrors` / `hubSpotApiHandler` are the names from the test. That's not a coincidence.
 
-| Package | Why |
-| --- | --- |
-| `@hubspot/api-client` | Official HubSpot Node client for Contacts, Deals, Associations, and Pipelines |
-| `dotenv` | Load `.env` without putting secrets in code |
-| `express` | Optional `hubSpotApiHandler` HTTP surface |
+Repositories just call the client. The service does pagination, name formatting, sync, and the association "already linked?" check. I turned the SDK's own retries off (`numberOfApiCallRetries: 0`) so 401/403 never retry and 429 uses `Retry-After`. That's in `handleHubSpotErrors`.
 
-Node.js built-ins used: `fs`, `stream`, `path`, `node:test`.
+CommonJS everywhere. Section 1 asked for `utils_module.js` / `main.js` that way, and I didn't want two module systems in one repo.
 
-`hubSpotClient` uses the generated CRM APIs (`crm.contacts.basicApi`, `crm.deals.basicApi`, `crm.associations.v4`, `crm.pipelines`). `apiRequest` is only used for account-info. SDK built-in retries are turned off (`numberOfApiCallRetries: 0`) so `handleHubSpotErrors` owns the assessment policy: no retry on 401/403/4xx, exponential backoff + `Retry-After` on 429/5xx.
+## Private app
 
-## Portal / hubId
+Use your own HubSpot portal. I didn't bake a hubId into this repo.
 
-This repository does not embed a portal id (that value belongs to the evaluator’s or candidate’s account).
+1. HubSpot → Settings → Integrations → Private Apps
+2. New app, whatever name
+3. Scopes I used:
+   - `crm.objects.contacts.read`
+   - `crm.objects.contacts.write`
+   - `crm.objects.deals.read`
+   - `crm.objects.deals.write`
+   - optional: `crm.schemas.contacts.read`, `crm.schemas.deals.read` if you want properties/pipelines
+4. Copy the token (`pat-na1-...`). Put it in `.env`. Don't commit it.
 
-After you add a token:
+`HUBSPOT_API_KEY` still works as a fallback if `HUBSPOT_ACCESS_TOKEN` isn't set. HubSpot killed hapikeys though — use a private app token.
+
+After the token is in `.env`:
 
 ```bash
 npm run example:account
 ```
 
-The response includes `portalId` (hubId). You can also read it in HubSpot under **Settings → Account & Setup → Account defaults**, or from the account-info API:
+That returns `portalId`. Same value as Settings → Account & Setup → Account defaults, or `GET https://api.hubapi.com/account-info/v3/details`.
 
-`GET https://api.hubapi.com/account-info/v3/details`
+UI: `https://app.hubspot.com/contacts/{portalId}`  
+API: `https://api.hubapi.com`
 
-Portal UI base URL: `https://app.hubspot.com/contacts/{portalId}`  
-API base URL: `https://api.hubapi.com`
-
-## Configure a Private App
-
-1. In HubSpot, go to **Settings → Integrations → Private Apps**.
-2. Create a private app (name it e.g. `node-crm-assessment`).
-3. On the **Scopes** tab, enable at least:
-
-   - `crm.objects.contacts.read`
-   - `crm.objects.contacts.write`
-   - `crm.objects.deals.read`
-   - `crm.objects.deals.write`
-
-   Optional but useful: `crm.schemas.contacts.read`, `crm.schemas.deals.read` (properties / pipelines).
-
-4. Create the app and copy the **access token**. It looks like `pat-na1-...`.
-5. Never commit the token. Put it in `.env` only.
-
-Legacy `HUBSPOT_API_KEY` (hapikey) is accepted as an alias for the Bearer token if `HUBSPOT_ACCESS_TOKEN` is unset. HubSpot has sunset hapikeys; use a Private App token.
-
-## Install and configure
+## Install
 
 ```bash
 npm install
 cp .env.example .env
-# edit .env and set HUBSPOT_ACCESS_TOKEN, plus pipeline/stage if your portal is not on defaults
 ```
 
-`.env.example` variables:
+Then edit `.env`:
 
 - `HUBSPOT_ACCESS_TOKEN` (or `HUBSPOT_API_KEY`)
-- `HUBSPOT_API_BASE_URL` (default `https://api.hubapi.com`)
-- `HUBSPOT_PIPELINE_ID` (official deal property `pipeline`)
-- `HUBSPOT_STAGE_ID` (official deal property `dealstage`)
+- `HUBSPOT_API_BASE_URL` — leave it at `https://api.hubapi.com`
+- `HUBSPOT_PIPELINE_ID` / `HUBSPOT_STAGE_ID` — stock portals are usually `default` / `appointmentscheduled`. If create-deal blows up, hit `GET /crm/v3/pipelines/deals` and paste real ids
 - `HUBSPOT_TIMEOUT_MS`, `HUBSPOT_MAX_RETRIES`, `HUBSPOT_RETRY_BASE_MS`
-- `PORT` for the Express handler
-
-Default pipeline/stage values (`default` / `appointmentscheduled`) match a stock HubSpot sales pipeline. If create-deal fails with a property error, list pipelines:
-
-`GET /crm/v3/pipelines/deals`  
-and put a real `pipeline` id and `dealstage` id in `.env`.
+- `PORT` if you run the Express handler (3000 by default)
 
 ## Run
 
-### Section 1 — Node.js fundamentals
+Fundamentals:
 
 ```bash
 npm run fundamentals:callbacks
@@ -103,7 +84,7 @@ npm run fundamentals:modules
 npm run fundamentals:streams
 ```
 
-### Section 2 — HubSpot examples (real API calls)
+HubSpot (needs a token):
 
 ```bash
 npm run example:account
@@ -117,7 +98,7 @@ npm run example:sync-contacts
 npm run example:sync-deals
 ```
 
-Or directly:
+Same thing without the npm scripts:
 
 ```bash
 node src/examples/create-contact.js
@@ -125,13 +106,13 @@ node src/examples/create-deal.js
 node src/examples/associate-contact-deal.js
 ```
 
-### Express handler
+The create/sync examples use emails like `riley.assessment+…@example.com` so they're easy to find and delete later.
+
+Express:
 
 ```bash
 npm start
 ```
-
-Then:
 
 ```bash
 curl -s http://localhost:3000/health
@@ -142,105 +123,58 @@ curl -s -X POST http://localhost:3000/deals \
   -d '{"dealName":"API Deal","amount":1500}'
 ```
 
-### Tests (no HubSpot token required)
+Tests (no HubSpot):
 
 ```bash
 npm test
 ```
 
-## Required functions
+## Functions from the test
 
-All of these live in `src/services/hubSpotService.js` and perform real HTTP calls:
+All in `src/services/hubSpotService.js`. They hit HubSpot for real.
 
-| Function | HubSpot call |
-| --- | --- |
-| `getHubSpotContactNames` | Paginated `GET /crm/v3/objects/contacts` → `["First Last", ...]` |
-| `getHubSpotContacts` | Paginated list; optional `email` filter via `idProperty=email` |
-| `createHubSpotContact` | `POST /crm/v3/objects/contacts` |
-| `updateHubSpotContact` | `PATCH /crm/v3/objects/contacts/{id}` |
-| `deleteHubSpotContact` | `DELETE /crm/v3/objects/contacts/{id}` |
-| `getHubSpotDeals` | Paginated `GET /crm/v3/objects/deals` |
-| `createHubSpotDeal(dealName, amount)` | `POST /crm/v3/objects/deals` with `dealname`, `amount`, `hs_pipeline`, `hs_stage` (and official `pipeline` / `dealstage`) |
-| `updateHubSpotDeal` | `PATCH /crm/v3/objects/deals/{id}` |
-| `deleteHubSpotDeal` | `DELETE /crm/v3/objects/deals/{id}` |
-| `associateContactToDeal` | Idempotent `PUT` v4 default association; v3 fallback typeId `4` (Contact to deal) |
-| `syncContactsWithHubSpot` | Local JSON → create/update by `email` |
-| `syncDealsWithHubSpot` | Local JSON → create/update by `id` or `dealname` |
+- `getHubSpotContactNames` — every contact, paginated, returns `["First Last", ...]`
+- `getHubSpotContacts` — one page (`limit` / `after`), optional `email` filter
+- `createHubSpotContact` — POST
+- `updateHubSpotContact` — PATCH
+- `deleteHubSpotContact` — DELETE (HubSpot archives the record)
+- `getHubSpotDeals` — paginated list
+- `createHubSpotDeal(dealName, amount)` — POST `dealname`, `amount`, `hs_pipeline`, `hs_stage`
+- `updateHubSpotDeal` — PATCH
+- `deleteHubSpotDeal` — DELETE / archive
+- `associateContactToDeal` — v4 default association; typeId 4 if that fails
+- `syncContactsWithHubSpot` — local JSON, match on email, create or update
+- `syncDealsWithHubSpot` — same idea, id then dealname
 
-## Official documentation (endpoints used)
+The test asked for `hs_pipeline` / `hs_stage` on deal create. HubSpot's actual property names are `pipeline` and `dealstage`. I send both, from `HUBSPOT_PIPELINE_ID` / `HUBSPOT_STAGE_ID`. If HubSpot 400s on the `hs_*` ones, I retry with only `pipeline` / `dealstage`.
 
-| Area | Docs | REST path |
-| --- | --- | --- |
-| Contacts | https://developers.hubspot.com/docs/api/crm/contacts | `/crm/v3/objects/contacts` |
-| Contact search / email id | same guide (`idProperty=email`, `/search`) | `/crm/v3/objects/contacts/{email}?idProperty=email` |
-| Deals | https://developers.hubspot.com/docs/api-reference/latest/crm/objects/deals/guide | `/crm/v3/objects/deals` |
-| Deal search | same guide + CRM search | `/crm/v3/objects/deals/search` |
-| Associations | https://developers.hubspot.com/docs/api-reference/legacy/crm/associations/associate-records/guide | `PUT /crm/v4/objects/contacts/{id}/associations/default/deals/{id}` |
-| Associations (typed) | same guide (Contact to deal = typeId **4**) | `PUT /crm/v3/objects/contacts/{id}/associations/deals/{id}/4` |
-| Pipelines | https://developers.hubspot.com/docs/api/crm/pipelines | `GET /crm/v3/pipelines/deals` |
-| Properties | https://developers.hubspot.com/docs/api/crm/properties | `GET /crm/v3/properties/deals` |
-| Account / portalId | https://developers.hubspot.com/docs/api-reference/account-management-account-info-v3/guide | `GET /account-info/v3/details` |
-| Usage / rate limits | https://developers.hubspot.com/docs/developer-tooling/platform/usage-guidelines | HTTP `429` + `Retry-After` |
+Associations: look up existing links first. If the contact is already on that deal, skip. Otherwise `createDefault`. Fallback is typeId 4 (`AssociationTypes.contactToDeal`).
 
-Pagination follows the contacts guide: read `paging.next.after` and send it as `after` on the next `GET`. Max page size is 100.
+Sync: email for contacts, id then dealname for deals. Exists → patch. Doesn't → create.
 
-## Deal properties: `hs_pipeline` / `hs_stage`
+## Errors
 
-The brief asks for `properties.dealname`, `properties.amount`, `hs_pipeline`, and `hs_stage` on create.
+`handleHubSpotErrors` normalizes whatever came back. `hubSpotClient` retries when `retryable` is true. Logger strips tokens / Authorization (`src/utils/logger.js`).
 
-Official deal properties are `dealname`, `amount`, `pipeline`, and `dealstage` (see the Deals API guide). `createHubSpotDeal` sends **both** pairs, populated from `HUBSPOT_PIPELINE_ID` / `HUBSPOT_STAGE_ID`. If HubSpot rejects `hs_pipeline` / `hs_stage` as unknown, the client retries once with only the official names.
+- network / timeout (`ECONNABORTED`, `ETIMEDOUT`, …) → retry
+- 401 / 403 → don't retry, check the token and scopes
+- 400 / 404 / other 4xx → don't retry
+- 429 → retry, honor `Retry-After`
+- 5xx → backoff, then give up
 
-## Associations and idempotency
+Service methods are all try/catch. Failures come out as `HubSpotError`.
 
-`associateContactToDeal(contactId, dealId)` (via `@hubspot/api-client`):
+## Docs I used
 
-1. `crm.associations.v4.basicApi.getPage('contacts', contactId, 'deals')` — if the deal is already linked, return success without writing.
-2. Otherwise `createDefault('contacts', contactId, 'deals', dealId)` (unlabeled default association; safe to repeat).
-3. Fallback: `create(..., [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: AssociationTypes.contactToDeal }])` (typeId **4**).
+Pagination is `paging.next.after` on the next GET. Max page size 100.
 
-Sync is idempotent by unique key (`email` for contacts, `id` then `dealname` for deals): existing records are patched; missing records are created.
-
-## Error handling
-
-`handleHubSpotErrors` classifies failures and `hubSpotClient` retries when `retryable` is true (exponential backoff + jitter, or `Retry-After` on 429). Tokens and `Authorization` headers are never logged (`src/utils/logger.js`).
-
-| Case | HTTP / code | Retry | Notes |
-| --- | --- | --- | --- |
-| Network / timeout | `ECONNABORTED`, `ETIMEDOUT`, `ECONNRESET`, … | Yes | No HTTP status from the SDK / transport |
-| Auth | 401 / 403 | No | Check token and scopes |
-| Validation / not found | 400 / 404 / other 4xx | No | Payload or missing record |
-| Rate limit | 429 | Yes | Honor `Retry-After` |
-| Server | 5xx | Yes | Backoff, then fail |
-
-Every service method wraps calls in `try/catch` and rethrows a normalized `HubSpotError`.
-
-## Technical decisions
-
-- **CommonJS** for the whole project so Section 1 (`utils_module.js` / `main.js`) and HubSpot code share one module system.
-- **Official `@hubspot/api-client`** for Contacts, Deals, Associations, and Pipelines so calls match HubSpot’s generated API.
-- **Custom retries on top of the SDK** (`numberOfApiCallRetries: 0`) so 401/403 never retry and 429 honors `Retry-After`.
-- **Repositories vs service**: repositories only call the client; the service owns pagination loops, name formatting, sync, and association idempotency.
-- **Bearer Private App token** is the supported auth method (current HubSpot recommendation).
-- **Example scripts** create clearly prefixed test data (`riley.assessment+…@example.com`) so a portal can be cleaned up after evaluation.
-
-## Project layout
-
-```
-src/
-  clients/hubSpotClient.js
-  config/index.js
-  data/contacts.json
-  data/deals.json
-  examples/
-  fundamentals/          callbacks.js, asyncAwait.js, utils_module.js, main.js
-  handlers/hubSpotApiHandler.js
-  repositories/contactRepository.js
-  repositories/dealRepository.js
-  services/hubSpotService.js
-  utils/handleHubSpotErrors.js
-  utils/validateHubSpotPayload.js
-  utils/streams.js
-  utils/logger.js
-test/
-.env.example
-```
+- Contacts — https://developers.hubspot.com/docs/api/crm/contacts — `/crm/v3/objects/contacts`
+- Contact by email — same guide, `idProperty=email`
+- Deals — https://developers.hubspot.com/docs/api-reference/latest/crm/objects/deals/guide — `/crm/v3/objects/deals`
+- Deal search — `/crm/v3/objects/deals/search`
+- Associations — https://developers.hubspot.com/docs/api-reference/legacy/crm/associations/associate-records/guide — `PUT /crm/v4/objects/contacts/{id}/associations/default/deals/{id}`
+- Typed association (contact → deal = typeId 4) — `PUT /crm/v3/objects/contacts/{id}/associations/deals/{id}/4`
+- Pipelines — https://developers.hubspot.com/docs/api/crm/pipelines — `GET /crm/v3/pipelines/deals`
+- Properties — https://developers.hubspot.com/docs/api/crm/properties — `GET /crm/v3/properties/deals`
+- Account / portalId — https://developers.hubspot.com/docs/api-reference/account-management-account-info-v3/guide — `GET /account-info/v3/details`
+- Rate limits — https://developers.hubspot.com/docs/developer-tooling/platform/usage-guidelines — 429 + `Retry-After`
