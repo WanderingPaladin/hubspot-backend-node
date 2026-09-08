@@ -16,6 +16,7 @@
     "example:create-contact": "node src/examples/create-contact.js",
     "example:list-deals": "node src/examples/list-deals.js",
     "example:create-deal": "node src/examples/create-deal.js",
+    "example:pipelines": "node src/examples/list-pipelines.js",
     "example:associate": "node src/examples/associate-contact-deal.js",
     "example:sync-contacts": "node src/examples/sync-contacts.js",
     "example:sync-deals": "node src/examples/sync-deals.js"
