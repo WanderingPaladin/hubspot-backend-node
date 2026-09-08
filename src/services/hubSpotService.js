@@ -23,6 +23,17 @@ function toContactProperties(input = {}) {
   return properties;
 }
 
+function stringifyDealProperties(properties = {}) {
+  const out = {};
+  for (const [key, value] of Object.entries(properties)) {
+    if (value === undefined || value === null || value === '') {
+      continue;
+    }
+    out[key] = String(value);
+  }
+  return out;
+}
+
 function toDealProperties(input = {}) {
   const source = input.properties || input;
   const properties = {};
@@ -31,10 +42,78 @@ function toDealProperties(input = {}) {
       properties[key] = source[key];
     }
   }
-  if (properties.amount !== undefined) {
-    properties.amount = String(properties.amount);
+  return stringifyDealProperties(properties);
+}
+
+function errorText(error) {
+  return `${error && error.message ? error.message : ''} ${JSON.stringify((error && error.details) || (error && error.body) || {})}`;
+}
+
+function shouldStripAssessmentDealFields(error) {
+  return Boolean(error && error.status === 400 && /PROPERTY_DOESNT_EXIST|PROPERTY_DOES_NOT_EXIST|hs_pipeline|hs_stage/i.test(errorText(error)));
+}
+
+function shouldResolvePipelineIds(error) {
+  return Boolean(
+    error &&
+      error.status === 400 &&
+      /INVALID_OPTION|not a valid pipeline|not a valid .*stage|pipelineId=/i.test(errorText(error)),
+  );
+}
+
+function pipelineList(payload) {
+  if (Array.isArray(payload)) {
+    return payload;
   }
-  return properties;
+  if (Array.isArray(payload?.results)) {
+    return payload.results;
+  }
+  return [];
+}
+
+function isClosedStage(stage = {}) {
+  const meta = stage.metadata || {};
+  if (meta.isClosed === true || meta.isClosed === 'true') {
+    return true;
+  }
+  if (meta.probability != null && Number(meta.probability) === 0) {
+    return true;
+  }
+  return /lost/i.test(stage.label || '');
+}
+
+async function resolvePipelineAndStage(preferred = {}) {
+  const pipelines = pipelineList(await hubSpotClient.pipelines.listDeals()).filter((pipeline) => !pipeline.archived);
+  if (!pipelines.length) {
+    const error = new PayloadValidationError('No active deal pipelines found in this HubSpot portal', ['pipeline']);
+    throw error;
+  }
+
+  const wantPipeline = String(preferred.pipeline || '');
+  const wantStage = String(preferred.stage || '');
+  const pipeline =
+    pipelines.find((row) => String(row.id) === wantPipeline) ||
+    pipelines.find((row) => String(row.label || '').toLowerCase() === wantPipeline.toLowerCase()) ||
+    pipelines.find((row) => row.default) ||
+    pipelines[0];
+
+  const stages = (pipeline.stages || []).filter((stage) => !stage.archived);
+  const stage =
+    stages.find((row) => String(row.id) === wantStage) ||
+    stages.find((row) => String(row.label || '').toLowerCase() === wantStage.toLowerCase()) ||
+    stages.find((row) => !isClosedStage(row)) ||
+    stages[0];
+
+  if (!stage) {
+    throw new PayloadValidationError(`Deal pipeline "${pipeline.id}" has no stages`, ['dealstage']);
+  }
+
+  return {
+    pipeline: String(pipeline.id),
+    dealstage: String(stage.id),
+    pipelineLabel: pipeline.label,
+    stageLabel: stage.label,
+  };
 }
 
 async function paginateAll(listPage, { limit = 100, properties, maxPages = 1000 } = {}) {
@@ -135,36 +214,60 @@ async function getHubSpotDeals(options = {}) {
 
 /**
  * POST /crm/v3/objects/deals
- * Sends assessment fields (hs_pipeline, hs_stage) plus official names (pipeline, dealstage).
+ * First attempt sends assessment fields (hs_pipeline, hs_stage) plus official
+ * names (pipeline, dealstage). HubSpot CRM deals actually use pipeline/dealstage;
+ * unknown hs_* properties and portal-specific pipeline IDs are retried.
  */
 async function createHubSpotDeal(dealName, amount, options = {}) {
   try {
-    const pipelineId = options.hs_pipeline || options.pipeline || config.hubspot.pipelineId;
-    const stageId = options.hs_stage || options.dealstage || options.stage || config.hubspot.stageId;
+    let pipelineId = options.hs_pipeline || options.pipeline || config.hubspot.pipelineId;
+    let stageId = options.hs_stage || options.dealstage || options.stage || config.hubspot.stageId;
+    let includeAssessmentFields = true;
 
-    const properties = validateHubSpotPayload('dealCreate', {
-      dealname: dealName,
-      amount,
-      hs_pipeline: pipelineId,
-      hs_stage: stageId,
-      pipeline: pipelineId,
-      dealstage: stageId,
-      ...options.properties,
-    });
+    const extra = toDealProperties(options.properties || {});
+    delete extra.pipeline;
+    delete extra.dealstage;
+    delete extra.hs_pipeline;
+    delete extra.hs_stage;
+    delete extra.dealname;
+    delete extra.amount;
+
+    const buildProperties = () =>
+      stringifyDealProperties(
+        validateHubSpotPayload('dealCreate', {
+          dealname: dealName,
+          amount,
+          pipeline: pipelineId,
+          dealstage: stageId,
+          ...(includeAssessmentFields ? { hs_pipeline: pipelineId, hs_stage: stageId } : {}),
+          ...extra,
+        }),
+      );
 
     try {
-      return await dealRepository.create(properties);
-    } catch (error) {
-      const invalidExtra =
-        error.status === 400 &&
-        /hs_pipeline|hs_stage|PROPERTY_DOESNT_EXIST|invalid.*propert/i.test(
-          `${error.message} ${JSON.stringify(error.details || {})}`,
-        );
-      if (invalidExtra) {
-        const { hs_pipeline: _p, hs_stage: _s, ...official } = properties;
+      return await dealRepository.create(buildProperties());
+    } catch (firstError) {
+      let error = firstError;
+
+      if (shouldStripAssessmentDealFields(error)) {
+        includeAssessmentFields = false;
         logInfo('Retrying deal create with official pipeline/dealstage properties only');
-        return await dealRepository.create(official);
+        try {
+          return await dealRepository.create(buildProperties());
+        } catch (strippedError) {
+          error = strippedError;
+        }
       }
+
+      if (shouldResolvePipelineIds(error)) {
+        includeAssessmentFields = false;
+        const resolved = await resolvePipelineAndStage({ pipeline: pipelineId, stage: stageId });
+        pipelineId = resolved.pipeline;
+        stageId = resolved.dealstage;
+        logInfo('Retrying deal create with pipeline/stage IDs from HubSpot', resolved);
+        return await dealRepository.create(buildProperties());
+      }
+
       throw error;
     }
   } catch (error) {

@@ -69,7 +69,7 @@ Then edit `.env`:
 
 - `HUBSPOT_ACCESS_TOKEN` (or `HUBSPOT_API_KEY`)
 - `HUBSPOT_API_BASE_URL` — leave it at `https://api.hubapi.com`
-- `HUBSPOT_PIPELINE_ID` / `HUBSPOT_STAGE_ID` — stock portals are usually `default` / `appointmentscheduled`. If create-deal blows up, hit `GET /crm/v3/pipelines/deals` and paste real ids
+- `HUBSPOT_PIPELINE_ID` / `HUBSPOT_STAGE_ID` — stock portals are usually `default` / `appointmentscheduled`. `createHubSpotDeal` retries without `hs_*` if HubSpot says those properties do not exist, then looks up real pipeline/stage IDs if it gets `INVALID_OPTION`. To print yours: `npm run example:pipelines`
 - `HUBSPOT_TIMEOUT_MS`, `HUBSPOT_MAX_RETRIES`, `HUBSPOT_RETRY_BASE_MS`
 - `PORT` if you run the Express handler (3000 by default)
 
@@ -93,6 +93,7 @@ npm run example:list-contacts
 npm run example:create-contact
 npm run example:list-deals
 npm run example:create-deal
+npm run example:pipelines
 npm run example:associate
 npm run example:sync-contacts
 npm run example:sync-deals
@@ -146,7 +147,7 @@ All in `src/services/hubSpotService.js`. They hit HubSpot for real.
 - `syncContactsWithHubSpot` — local JSON, match on email, create or update
 - `syncDealsWithHubSpot` — same idea, id then dealname
 
-The test asked for `hs_pipeline` / `hs_stage` on deal create. HubSpot's actual property names are `pipeline` and `dealstage`. I send both, from `HUBSPOT_PIPELINE_ID` / `HUBSPOT_STAGE_ID`. If HubSpot 400s on the `hs_*` ones, I retry with only `pipeline` / `dealstage`.
+The test asked for `hs_pipeline` / `hs_stage` on deal create. HubSpot's actual property names are `pipeline` and `dealstage`. I send both, from `HUBSPOT_PIPELINE_ID` / `HUBSPOT_STAGE_ID`, and stringify `amount`. If HubSpot 400s on the `hs_*` ones, I retry with only `pipeline` / `dealstage`. If the IDs themselves are wrong for the portal (`INVALID_OPTION`), I `GET /crm/v3/pipelines/deals` and retry with a real pipeline/stage.
 
 Associations: look up existing links first. If the contact is already on that deal, skip. Otherwise `createDefault`. Fallback is typeId 4 (`AssociationTypes.contactToDeal`).
 

@@ -1,6 +1,6 @@
 const { hubSpotClient } = require('../clients/hubSpotClient');
 
-const DEFAULT_PROPERTIES = ['dealname', 'amount', 'pipeline', 'dealstage', 'hs_pipeline', 'hs_stage'];
+const DEFAULT_PROPERTIES = ['dealname', 'amount', 'pipeline', 'dealstage', 'closedate'];
 
 const dealRepository = {
   async list({ limit = 100, after, properties = DEFAULT_PROPERTIES, archived = false } = {}) {
